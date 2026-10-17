@@ -1,0 +1,269 @@
+/*
+    Ticker ESP8266
+    Hardware: NodeMCU
+    Circuits4you.com
+    2018
+    LED Blinking using Ticker
+*/
+#include <ESP8266WiFi.h>
+#include <Ticker.h>  //Ticker Library
+#include <MQTTClient.h>     //joel Gaehwiler
+#include <ArduinoJson.h>
+
+//#define LED 2  //On board LED
+
+
+
+const int sleepSeconds = 10;
+const char* ssid = "rheinsberg.mesh"; //WLAN Netzwerk
+const char* password = "1234567899";    //WLAN Passwort
+
+const char* hostname = "mqttBlitzer"; 
+//const char* mqtt_server = "duemchen.feste-ip.net";int mport = 56686;
+
+const char* mqtt_user="u123blitz";
+
+const char* mqtt_server = "192.168.10.51";
+int mport = 1883;
+
+const char* mqtt_path_receive = "433Simple/sensor"; //"tor/gong";  
+const char* mqtt_path_send = "";
+const byte ledPin = LED_BUILTIN;
+const byte relPin = 0;
+//Änderungen erkennen
+int s0_last = -1;
+int s1_last = -1;
+long nextTime = 0;
+long lastwifibegin = 0;
+
+WiFiClient client;
+MQTTClient mclient;
+
+// Alarmzeit
+const unsigned long zeitFenster=5000;
+unsigned long endeZeit = 0;
+unsigned long ledausZeit = 0;
+//
+Ticker blinker;
+const long watchdogSeconds=20;
+unsigned long  watchcounter=0;
+
+void blinkLED(){
+  watchcounter++;
+  //Serial.print(watchcounter);
+  if(watchcounter > 20){  
+    //ets_printf("reboot\n");   
+    //Serial.println("reboot."); 
+    WiFi.persistent(false); 
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
+    WiFi.mode(WIFI_STA);
+    ESP.restart();
+  }
+
+
+    
+}
+void startWatchdog(){    
+    //Initialize Ticker every 0.5s
+    blinker.attach(2, blinkLED); // use attach_ms for milliseconds
+}
+
+
+
+//=======================================================================
+
+void connect() {
+  Serial.print("checking wifi\n");  
+  while (WiFi.status() != WL_CONNECTED) {    
+    if (lastwifibegin < millis() + 30000) {
+      WiFi.persistent(false); 
+      WiFi.disconnect();
+      WiFi.mode(WIFI_OFF);
+      WiFi.mode(WIFI_STA);
+      lastwifibegin = millis();
+      Serial.print("\nretry wifi begin...");
+      Serial.println(millis());
+      //WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+      WiFi.hostname(hostname);
+      WiFi.begin(ssid, password);
+      while (WiFi.status() != WL_CONNECTED) {  
+        Serial.print(".");
+        delay(1000); //warten auf Verbindung  
+      }
+      Serial.println("\n-------------------------");      
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+      Serial.print("ESP Mac Address: ");
+      Serial.println(WiFi.macAddress());
+      Serial.print("Subnet Mask: ");
+      Serial.println(WiFi.subnetMask());
+      Serial.print("Gateway IP: ");
+      Serial.println(WiFi.gatewayIP());
+      Serial.print("DNS: ");
+      Serial.println(WiFi.dnsIP());  
+      Serial.println("-------------------------");      
+      Serial.print("\nwifi connected.\n");
+      for (int i=0; i<3; i++){
+        digitalWrite(ledPin, 1); // Status   
+        digitalWrite(relPin, 1); // Status   
+        delay(100);
+        digitalWrite(ledPin, 0); // Status   
+        digitalWrite(relPin, 0); // Status   
+        delay(100);
+      }
+      break;      
+    }
+  }
+  
+  //printMacAddress();
+
+  Serial.print("connecting to MQTT-Server");
+  for (int i=0; i<3; i++){
+    Serial.print("\nconnecting to MQTT-Server");
+    digitalWrite(ledPin, 1); // Status   
+    
+    if(mclient.connect(mqtt_user, "try", "try")){
+      Serial.println("\nMQTT connected.\n");
+      break;     
+    }
+    Serial.print("not connecting to MQTT-Server");
+    digitalWrite(ledPin, 0); // Status   
+    delay(1000);
+  }
+  //endeZeit = millis();  
+  mclient.subscribe(mqtt_path_receive);
+  Serial.print("subscribe to ");
+  Serial.print(mqtt_path_receive);
+  Serial.print("\n");
+  Serial.print("Connection complete.\n");
+  delay(500);  
+  digitalWrite(ledPin, 0); // Status   
+  delay(1000);  
+  digitalWrite(ledPin, 1); // Status   
+  digitalWrite(relPin, 1);
+}
+
+void messageReceived(String &topic, String &payload) {
+ Serial.println("incoming: " + topic + " >" + payload+"<");
+ int i = payload.toInt();
+ //playSound(i);
+ if(i==14222350){
+  endeZeit = millis()+zeitFenster;    
+ }
+ if(i==1115150){
+  endeZeit = millis()+zeitFenster;    
+ }
+ 
+ 
+
+ 
+ /*
+ StaticJsonDocument<255> doc;  
+ DeserializationError error = deserializeJson(doc, payload);
+ if(error){
+  Serial.println("error Json");
+  return;
+ }
+ long id= doc["val"];  
+ Serial.println("count ");  
+ Serial.println(id);
+ Serial.println("\n");  
+ playSound(id);
+ */
+}
+
+
+
+
+void relChangeState()
+{
+  digitalWrite(relPin, !(digitalRead(relPin)));  //Invert Current State of LED  
+}
+
+
+//=======================================================================
+//                               Setup
+//=======================================================================
+void setup()
+{
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.begin(115200);
+  WiFi.disconnect();
+  delay(300);
+  Serial.println("\nStarting...");  
+  WiFi.begin(ssid, password);
+  Serial.println(WiFi.macAddress());
+  char* str1;
+  char* str2;  
+  str1 = "mqttBlitzer-";
+  String s=WiFi.macAddress();
+  s.replace(":","");
+  str2 = (char *) s.c_str();
+  char * str3 = (char *) malloc(1 + strlen(str1)+ strlen(str2) );
+  strcpy(str3, str1);
+  strcat(str3, str2);    
+  
+  hostname = str3;
+  mqtt_user = str3;
+  Serial.print("\n mqtt-User = ");  
+  Serial.print(mqtt_user);    
+  Serial.print("\n");  
+
+  char* str4= "sonnen/" ;
+  char* str5 = (char *) malloc(1 + strlen(str3)+ strlen(str4) );
+  strcpy(str5, str4);
+  strcat(str5, str3);   
+  mqtt_path_send = str5;
+  Serial.print("\nmqtt_path_send ");  
+  Serial.println(mqtt_path_send);
+  
+  lastwifibegin = millis();
+  mclient.begin(mqtt_server, mport, client);  
+  mclient.onMessage(messageReceived);
+  Serial.print("setup complete\n");
+  pinMode(ledPin, OUTPUT);
+  pinMode(relPin, OUTPUT);
+  startWatchdog();   
+}
+//=======================================================================
+//                MAIN LOOP
+//=======================================================================
+void loop()
+{
+  watchcounter = 0;
+  mclient.loop();
+  // blinken ohne unterbrechung des loop
+  if(endeZeit != 0){    // wird gestartet von mqtt signal, blinkzeit gesamt    
+    if( millis() < endeZeit ){ //blinken läuft          
+        if(ledausZeit < millis()) { 
+          if(digitalRead(ledPin)==0) {
+            digitalWrite(ledPin, 1); // led aus   
+            relChangeState(); //rel klick doppelt schnell
+            ledausZeit = millis() + 500;
+          } else {
+            digitalWrite(ledPin, 0); // led ein   
+            ledausZeit = millis() + 20;            
+          }
+        }   
+      } else {      
+      endeZeit=0;      
+      digitalWrite(ledPin, 1); // led aus
+      digitalWrite(relPin, 1); // led aus
+      }
+  }  
+  if (!mclient.connected()) {
+    connect();
+  }
+
+  //while (true){     Serial.println("waiting");    delay(1000);  }
+}
+  
+
+
+
+
+
+//=======================================================================
